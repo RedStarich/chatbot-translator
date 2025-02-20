@@ -1,0 +1,25 @@
+[
+    {
+        "chatId": "1234567890",
+        "language": "English",
+        "connectId": "1234567890",
+        "friends": [
+            {
+                "id": "1234567890",
+                "language": "English"
+            }
+        ]
+    },
+    {
+        "chatId": 122132311,
+        "connectId": 122132311
+    },
+    {
+        "Altair's chatId": "496110483",
+        "chatId": 496110483,
+        "language": "Russian",
+        "connectId": 496110483,
+        "friends": [
+        ]
+    }
+]
