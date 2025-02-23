@@ -19,66 +19,56 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 let connected = false;
 
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
-    bot.sendMessage(chatId, `Welcome to the IceBreaker bot! Your chatId is: ${chatId}`);
-
-    // Read data.json and add the new user if not exists
-    fs.readFile('data.json', 'utf8', (err, data) => {
-        let users = [];
-
-        if (!err) {
-            try {
-                users = JSON.parse(data);
-            } catch (parseError) {
-                console.error('Error parsing data.json:', parseError);
-            }
-        }
-
-        let user = users.find(user => user.chatId === chatId);
-
-        if (!user) {
-            user = {
+    await bot.sendMessage(chatId, `Your chatId is: ${chatId}`);
+    try {
+        let users = JSON.parse(fs.readFileSync('data.json', 'utf8') || '[]');
+        if (!users.some(user => user.chatId === chatId)) {
+            users.push({
                 chatId: chatId,
+                language: null,
                 friends: [],
-                connected: false,  // Ensure the user starts as disconnected
+                connected: false,
                 currentConnection: null
-            };
-            users.push(user);
+            });
+            fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
+            await bot.sendMessage(chatId, 'Welcome! New user registered.');
         }
-
-        fs.writeFile('data.json', JSON.stringify(users, null, 2), (err) => {
-            if (err) {
-                console.error('Error writing data.json:', err);
-            }
-        });
-    });
+    } catch (error) {
+        console.error('Error handling data.json:', error);
+        await bot.sendMessage(chatId, 'An error occurred during registration');
+    }
 });
-
-
+// Create data.json if it doesn't exist
 bot.onText(/\/language/, (msg) => {
     const chatId = msg.chat.id;
     bot.sendMessage(chatId, "Enter your preferred language");
-    bot.on('message', (msg) => {
-        fs.readFile('data.json', 'utf8', (err, data) => {
-            if (err) {
-                console.error('Error reading data.json:', err);
-                return;
-            }
+    // Create one-time listener
+    bot.once('message', (msg) => {
+        try {
+            let users = JSON.parse(fs.readFileSync('data.json', 'utf8') || '[]');
             const language = msg.text;
-            let users = JSON.parse(data);
             const userIndex = users.findIndex(user => user.chatId === chatId);
+
             if (userIndex === -1) {
-                users.push({ chatId: chatId, language: language });
+                users.push({
+                    chatId: chatId,
+                    language: language,
+                    friends: [],
+                    connected: false,
+                    currentConnection: null
+                });
             } else {
                 users[userIndex].language = language;
             }
-            fs.writeFile('data.json', JSON.stringify(users), (err) => {
-                if (err) {
-                    console.error('Error writing data.json:', err);
-                }
-            });
-        });
+
+            fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
+            bot.sendMessage(chatId, `Language set to: ${language}`);
+        } catch (error) {
+            console.error('Error handling data.json:', error);
+            bot.sendMessage(chatId, 'An error occurred while setting the language');
+        }
     });
 });
 
@@ -146,41 +136,49 @@ bot.onText(/\/addfriend/, (msg) => {
 
 bot.onText(/\/connect/, (msg) => {
     const chatId = msg.chat.id;
-    console.log('connectId:', connectId);
-    //show array of friends to choose current connection
-    if (connectId === chatId) {
-        bot.sendMessage(chatId, 'You are not connected to any chatId');
-        //select friend from list of friends
 
-        fs.readFile('data.json', 'utf8', (err, data) => {
-            if (err) {
-                console.error('Error reading data.json:', err);
-                return;
-            }
-            let users = JSON.parse(data);
-            const user = users.find(u => u.chatId === chatId);
-            if (!user || !user.friends || user.friends.length === 0) {
-                bot.sendMessage(chatId, 'You have no friends added');
-                return;
-            }
+    fs.readFile('data.json', 'utf8', (err, data) => {
+        if (err) {
+            console.error('Error reading data.json:', err);
+            return;
+        }
+        let users = JSON.parse(data);
+        const user = users.find(u => u.chatId === chatId);
 
-            const friendsList = user.friends.map((friendId, index) => {
-                return `${index + 1}. ChatID: ${friendId}`;
-            }).join('\n');
+        if (!user || !user.friends || user.friends.length === 0) {
+            bot.sendMessage(chatId, 'You have no friends added');
+            return;
+        }
 
-            bot.sendMessage(chatId, 'Your friends:\n' + friendsList + '\n\nEnter the number of the friend to connect with');
-            bot.once('message', (response) => {
-                const selection = parseInt(response.text) - 1;
-                if (selection >= 0 && selection < user.friends.length) {
-                    connectId = user.friends[selection];
-                    bot.sendMessage(chatId, `Connected to chat ${connectId}`);
-                } else {
-                    bot.sendMessage(chatId, 'Invalid selection');
+        if (user.currentConnection) {
+            bot.sendMessage(chatId, `Already connected to ${user.currentConnection}`);
+            return;
+        }
+
+        const friendsList = user.friends.map((friendId, index) => {
+            return `${index + 1}. ChatID: ${friendId}`;
+        }).join('\n');
+
+        bot.sendMessage(chatId, 'Your friends:\n' + friendsList + '\n\nEnter the number of the friend to connect with');
+        bot.once('message', (response) => {
+            const selection = parseInt(response.text) - 1;
+            if (selection >= 0 && selection < user.friends.length) {
+                const friendId = user.friends[selection];
+                user.currentConnection = friendId;
+
+                const friend = users.find(u => u.chatId === friendId);
+                if (friend) {
+                    friend.currentConnection = chatId;
                 }
-            });
-        });
-    }
 
+                fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
+                bot.sendMessage(chatId, `Connected to chat ${friendId}`);
+                bot.sendMessage(friendId, `User ${chatId} has connected with you`);
+            } else {
+                bot.sendMessage(chatId, 'Invalid selection');
+            }
+        });
+    });
 });
 
 
@@ -226,7 +224,38 @@ bot.onText(/\/disconnect/, (msg) => {
 });
 
 
+bot.onText(/\/status/, (msg) => {
+
+    const chatId = msg.chat.id;
+    fs.readFile('data.json', 'utf8', (err, data) => {
+        if (err) {
+            console.error('Error reading data.json:', err);
+            bot.sendMessage(chatId, '⚠️ An error occurred. Please try again later.');
+            return;
+        }
+
+        let users = JSON.parse(data);
+        const user = users.find(u => u.chatId === chatId);
+
+        if (!user) {
+            bot.sendMessage(chatId, 'You are not registered.');
+            return;
+        }
+
+        if (user.currentConnection) {
+            bot.sendMessage(chatId, `Status: connected to ${user.currentConnection}`);
+        } else {
+            bot.sendMessage(chatId, 'Status: unconnected');
+        }
+    });
+});
+
 bot.on('message', (msg) => {
+    // Skip if message is a command or from the bot
+    if (msg.text.startsWith('/') || msg.from.is_bot) {
+        return;
+    }
+
     const chatId = msg.chat.id;
     const message = msg.text;
 
@@ -242,15 +271,7 @@ bot.on('message', (msg) => {
 
         if (user && user.currentConnection) {
             const recipient = user.currentConnection;
-            
-            // Debugging log
-            console.log(`Message from ${chatId} to ${recipient}: ${message}`);
-
-            // Forward message to connected user
-            bot.sendMessage(recipient, `👤 User ${chatId}: ${message}`);
-        } else {
-            bot.sendMessage(chatId, "You are not connected to anyone. Use /connect to start a conversation.");
-            console.log(`User ${chatId} tried to send a message but is not connected.`);
+            bot.sendMessage(recipient, `Message sent to ${recipient}: ${message}`);
         }
     });
 });

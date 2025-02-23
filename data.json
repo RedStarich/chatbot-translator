@@ -15,13 +15,19 @@
     "connectId": 122132311
   },
   {
-    "Altair's chatId": "496110483",
-    "chatId": 496110483,
-    "language": "Russian",
-    "connectId": 496110483,
-    "friends": []
+    "chatId": 7962831087,
+    "friends": [
+      496110483
+    ],
+    "currentConnection": 496110483
   },
   {
-    "chatId": 7962831087
+    "chatId": 496110483,
+    "language": "Russian",
+    "friends": [
+      7962831087
+    ],
+    "connected": false,
+    "currentConnection": 7962831087
   }
 ]
