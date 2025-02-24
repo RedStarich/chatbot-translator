@@ -3,6 +3,7 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const { json } = require('body-parser');
+const llm = require('./llm.cjs')
 dotenv.config();
 
 const TELEGRAM_BOT_API = dotenv.parse.TELEGRAM_BOT_API || process.env.TELEGRAM_BOT_API;
