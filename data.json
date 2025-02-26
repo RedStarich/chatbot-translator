@@ -29,5 +29,12 @@
     ],
     "connected": false,
     "currentConnection": 7962831087
+  },
+  {
+    "chatId": 7172574557,
+    "language": null,
+    "friends": [],
+    "connected": false,
+    "currentConnection": null
   }
 ]

@@ -3,20 +3,21 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const { json } = require('body-parser');
-const llm = require('./llm.cjs')
+const llm = require('./llm.js')
 dotenv.config();
 
 const TELEGRAM_BOT_API = dotenv.parse.TELEGRAM_BOT_API || process.env.TELEGRAM_BOT_API;
-const GEMINI_API_KEY = dotenv.parse.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+// const GEMINI_API_KEY = dotenv.parse.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
 const bot = new TelegramBot(TELEGRAM_BOT_API, { polling: true });
 bot.getMe().then((botInfo) => {
     console.log(`Bot Name: ${botInfo.first_name}`);
     console.log(`Bot Username: @${botInfo.username}`);
+    
 });
 
 
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+// const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 let connected = false;
 
@@ -33,8 +34,10 @@ bot.onText(/\/start/, async (msg) => {
                 connected: false,
                 currentConnection: null
             });
+            console.log("message sent");
             fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
             await bot.sendMessage(chatId, 'Welcome! New user registered.');
+            
         }
     } catch (error) {
         console.error('Error handling data.json:', error);
@@ -76,22 +79,23 @@ bot.onText(/\/language/, (msg) => {
 bot.onText(/\/gemini (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const requestText = match[1];
-
-    try {
-        console.log('Incoming request:', requestText); // Log request text
-        const response = await axios.post(GEMINI_URL, {
-            contents: [{
-                parts: [{
-                    text: requestText
-                }]
-            }]
-        });
-        console.log('API response:', response.data); // Log API response
-        bot.sendMessage(chatId, response.data.candidates[0].content.parts[0].text);
-    } catch (error) {
-        console.error('Error response:', error.response ? error.response.data : error.message);
-        bot.sendMessage(chatId, 'Failed to fetch Gemini response');
-    }
+    console.log("ChatID: " + chatId);
+    console.log("Request Text: " + requestText); 
+    // try {
+    //     console.log('Incoming request:', requestText); // Log request text
+    //     const response = await axios.post(GEMINI_URL, {
+    //         contents: [{
+    //             parts: [{
+    //                 text: requestText
+    //             }]
+    //         }]
+    //     });
+    //     console.log('API response:', response.data); // Log API response
+    //     bot.sendMessage(chatId, response.data.candidates[0].content.parts[0].text);
+    // } catch (error) {
+    //     console.error('Error response:', error.response ? error.response.data : error.message);
+    //     bot.sendMessage(chatId, 'Failed to fetch Gemini response');
+    // }
 });
 
 bot.onText(/\/addfriend/, (msg) => {
