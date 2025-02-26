@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const { json } = require('body-parser');
 const llm = require('./llm.js')
+const { translate } = require('./llm.js');
 dotenv.config();
 
 const TELEGRAM_BOT_API = dotenv.parse.TELEGRAM_BOT_API || process.env.TELEGRAM_BOT_API;
@@ -13,7 +14,7 @@ const bot = new TelegramBot(TELEGRAM_BOT_API, { polling: true });
 bot.getMe().then((botInfo) => {
     console.log(`Bot Name: ${botInfo.first_name}`);
     console.log(`Bot Username: @${botInfo.username}`);
-    
+
 });
 
 
@@ -37,7 +38,7 @@ bot.onText(/\/start/, async (msg) => {
             console.log("message sent");
             fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
             await bot.sendMessage(chatId, 'Welcome! New user registered.');
-            
+
         }
     } catch (error) {
         console.error('Error handling data.json:', error);
@@ -80,7 +81,7 @@ bot.onText(/\/gemini (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const requestText = match[1];
     console.log("ChatID: " + chatId);
-    console.log("Request Text: " + requestText); 
+    console.log("Request Text: " + requestText);
     // try {
     //     console.log('Incoming request:', requestText); // Log request text
     //     const response = await axios.post(GEMINI_URL, {
@@ -265,7 +266,7 @@ bot.on('message', (msg) => {
     const message = msg.text;
 
     // Read user connections from data.json
-    fs.readFile('data.json', 'utf8', (err, data) => {
+    fs.readFile('data.json', 'utf8', async (err, data) => {
         if (err) {
             console.error('Error reading data.json:', err);
             return;
@@ -275,8 +276,13 @@ bot.on('message', (msg) => {
         const user = users.find(u => u.chatId === chatId);
 
         if (user && user.currentConnection) {
-            const recipient = user.currentConnection;
-            bot.sendMessage(recipient, `Message sent to ${recipient}: ${message}`);
+            const recipientId = user.currentConnection;
+            const recipientUser = users.find(u => u.chatId === recipientId);
+            let translatedMessage = await translate(message, user.language, recipientUser.language); // Assuming translate is async
+            console.log(user.language);
+            console.log(recipientUser.language);
+            console.log(translatedMessage);
+            bot.sendMessage(recipientId, `Message sent to ${recipientId}: ${translatedMessage}`);
         }
     });
 });

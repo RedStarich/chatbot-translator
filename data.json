@@ -19,22 +19,37 @@
     "friends": [
       496110483
     ],
-    "currentConnection": 496110483
-  },
-  {
-    "chatId": 496110483,
-    "language": "Russian",
-    "friends": [
-      7962831087
-    ],
-    "connected": false,
     "currentConnection": 7962831087
   },
   {
-    "chatId": 7172574557,
-    "language": null,
-    "friends": [],
+    "chatId": 496110483,
+    "language": "Русский",
+    "friends": [
+      7962831087,
+      7172574557,
+      5690202252
+    ],
     "connected": false,
-    "currentConnection": null
+    "currentConnection": 5690202252
+  },
+  {
+    "chatId": 7172574557,
+    "language": "Filipino",
+    "friends": [
+      496110483,
+      5690202252
+    ],
+    "connected": false,
+    "currentConnection": 5690202252
+  },
+  {
+    "chatId": 5690202252,
+    "language": "French",
+    "friends": [
+      7172574557,
+      496110483
+    ],
+    "connected": false,
+    "currentConnection": 496110483
   }
 ]
