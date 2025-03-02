@@ -17,9 +17,13 @@
   {
     "chatId": 7962831087,
     "friends": [
-      496110483
+      496110483,
+      7962831087,
+      7962831087
     ],
-    "currentConnection": 7962831087
+    "currentConnection": 7962831087,
+    "language": "urdu",
+    "gender": 1
   },
   {
     "chatId": 496110483,
@@ -30,7 +34,7 @@
       5690202252
     ],
     "connected": false,
-    "currentConnection": 5690202252
+    "currentConnection": null
   },
   {
     "chatId": 7172574557,
