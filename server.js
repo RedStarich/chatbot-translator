@@ -1,7 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const dotenv = require('dotenv');
-const fs = require('fs');
+const { User } = require('./db.js'); // Import User model instead of using fs
 const { translate } = require('./llm.js'); // Importing the translation function
 dotenv.config();
 
@@ -26,17 +26,30 @@ const GENDER_REVERSE_MAP = {
     'other': 2
 };
 
-// Helper function to ensure data file exists
-function ensureDataFileExists() {
-    if (!fs.existsSync('data.json')) {
-        fs.writeFileSync('data.json', JSON.stringify([]));
+// Helper function to find or create user
+async function findOrCreateUser(chatId, name) {
+    try {
+        let user = await User.findOne({ chatId });
+        
+        if (!user) {
+            user = new User({
+                chatId,
+                language: null,
+                gender: null,
+                friends: [],
+                connected: false,
+                currentConnection: null,
+                name: name || 'User'
+            });
+            
+            await user.save();
+        }
+        
+        return user;
+    } catch (error) {
+        console.error('Error finding or creating user:', error);
+        throw error;
     }
-}
-
-
-// Helper function to save user data
-function saveUserData(users) {
-    fs.writeFileSync('data.json', JSON.stringify(users, null, 2));
 }
 
 // Improved welcome message with inline keyboard
@@ -45,23 +58,10 @@ bot.onText(/\/start/, async (msg) => {
     await bot.sendMessage(chatId, `Your chatId is: ${chatId}`);
     
     try {
-        ensureDataFileExists();
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+        const user = await findOrCreateUser(chatId, msg.from.first_name);
         
-        if (!users.some(user => user.chatId === chatId)) {
-            users.push({
-                chatId: chatId,
-                language: null,
-                gender: null,
-                friends: [],
-                connected: false,
-                currentConnection: null,
-                name: msg.from.first_name || 'User'
-            });
-            
-            saveUserData(users);
-            
-            // Welcome message with inline buttons
+        if (!user.language || user.gender === null) {
+            // Welcome message with inline buttons for new users
             const welcomeMessage = `👋 Welcome to TranslationBot!\n\nThis bot allows you to chat with friends in different languages. The bot will automatically translate messages between you.\n\nPlease set up your profile:`;
             
             const keyboard = {
@@ -87,7 +87,7 @@ bot.onText(/\/start/, async (msg) => {
             await bot.sendMessage(chatId, mainMenuMessage, { reply_markup: keyboard });
         }
     } catch (error) {
-        console.error('Error handling data.json:', error);
+        console.error('Error in start command:', error);
         await bot.sendMessage(chatId, 'An error occurred during registration');
     }
 });
@@ -122,7 +122,7 @@ bot.onText(/\/help/, (msg) => {
 });
 
 // Handle callback queries from inline buttons
-bot.on('callback_query', (callbackQuery) => {
+bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message.chat.id;
     const action = callbackQuery.data;
     
@@ -169,18 +169,19 @@ bot.on('callback_query', (callbackQuery) => {
 });
 
 // Function to set gender
-function setGender(chatId, genderValue) {
+async function setGender(chatId, genderValue) {
     try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const userIndex = users.findIndex(user => user.chatId === chatId);
+        const user = await User.findOneAndUpdate(
+            { chatId }, 
+            { gender: genderValue },
+            { new: true }
+        );
 
-        if (userIndex !== -1) {
-            users[userIndex].gender = genderValue;
-            saveUserData(users);
+        if (user) {
             bot.sendMessage(chatId, `✅ Gender set to: ${GENDER_MAP[genderValue]}`);
             
             // Check if user has both language and gender set
-            checkSetupComplete(chatId, users[userIndex]);
+            checkSetupComplete(chatId, user);
         }
     } catch (error) {
         console.error('Error setting gender:', error);
@@ -211,35 +212,63 @@ function checkSetupComplete(chatId, user) {
 }
 
 // Improved language selection with common options
-function handleSetLanguage(chatId) {
-    bot.sendMessage(chatId, "🌐 Enter your preferred language");
+async function handleSetLanguage(chatId) {
+    const message = `🌐 *Select Your Language*\n\nChoose the language you want to use:\n\n*This will be used for translation purposes.*`;
     
-    // Create one-time listener
-    bot.once('message', (msg) => {
-        if (msg.chat.id === chatId) {
-            try {
-                let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-                const language = msg.text;
-                const userIndex = users.findIndex(user => user.chatId === chatId);
+    // Common language options with ISO 639-1 codes
+    const languageOptions = [
+        [{ text: '🇺🇸 English (en)', callback_data: 'lang_en' }],
+        [{ text: '🇪🇸 Spanish (es)', callback_data: 'lang_es' }],
+        [{ text: '🇫🇷 French (fr)', callback_data: 'lang_fr' }],
+        [{ text: '🇩🇪 German (de)', callback_data: 'lang_de' }],
+        [{ text: '🇮🇹 Italian (it)', callback_data: 'lang_it' }],
+        [{ text: '🇨🇳 Chinese (zh)', callback_data: 'lang_zh' }],
+        [{ text: '🇯🇵 Japanese (ja)', callback_data: 'lang_ja' }],
+        [{ text: '🇷🇺 Russian (ru)', callback_data: 'lang_ru' }]
+    ];
+    
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: languageOptions
+        }
+    });
 
-                if (userIndex !== -1) {
-                    users[userIndex].language = language;
-                    saveUserData(users);
-                    bot.sendMessage(chatId, `✅ Language set to: ${language}`);
-                    
-                    // Check if user has both language and gender set
-                    checkSetupComplete(chatId, users[userIndex]);
-                }
-            } catch (error) {
-                console.error('Error setting language:', error);
-                bot.sendMessage(chatId, 'An error occurred while setting the language');
-            }
+    // Add listener for language selection callback
+    bot.on('callback_query', async (callbackQuery) => {
+        const data = callbackQuery.data;
+        
+        if (data.startsWith('lang_')) {
+            const langCode = data.split('_')[1];
+            await setUserLanguage(callbackQuery.message.chat.id, langCode);
+            bot.answerCallbackQuery(callbackQuery.id);
         }
     });
 }
 
+// Set user language
+async function setUserLanguage(chatId, langCode) {
+    try {
+        const user = await User.findOneAndUpdate(
+            { chatId },
+            { language: langCode },
+            { new: true }
+        );
+
+        if (user) {
+            bot.sendMessage(chatId, `✅ Language set to: ${langCode}`);
+            
+            // Check if user has both language and gender set
+            checkSetupComplete(chatId, user);
+        }
+    } catch (error) {
+        console.error('Error setting language:', error);
+        bot.sendMessage(chatId, 'An error occurred while setting language');
+    }
+}
+
 // Improved gender selection with inline buttons
-function handleSetGender(chatId) {
+async function handleSetGender(chatId) {
     const keyboard = {
         inline_keyboard: [
             [
@@ -250,215 +279,265 @@ function handleSetGender(chatId) {
         ]
     };
     
-    bot.sendMessage(chatId, '👤 Select your gender (for grammatical purposes in translations):', {
+    await bot.sendMessage(chatId, '👤 Select your gender (for grammatical purposes in translations):', {
         reply_markup: keyboard
     });
 }
 
 // Improved add friend with validation
-function handleAddFriend(chatId) {
-    bot.sendMessage(chatId, `➕ *Add a Friend*\n\nPlease enter your friend's chat ID.`, {
+async function handleAddFriend(chatId) {
+    await bot.sendMessage(chatId, `➕ *Add a Friend*\n\nEnter your friend's Chat ID to add them to your contact list.\n\nYou can ask your friend to use the /start command to get their Chat ID.`, {
         parse_mode: 'Markdown'
     });
-
-    // Create one-time listener
-    bot.once('message', (msg) => {
-        if (msg.chat.id === chatId) {
-            const friendId = parseInt(msg.text);
-            if (isNaN(friendId)) {
-                bot.sendMessage(chatId, '⚠️ Invalid chat ID. Please enter a valid number.');
+    
+    // Set up a one-time listener for the next message
+    bot.once('message', async (msg) => {
+        if (msg.chat.id !== chatId || !msg.text) return;
+        
+        // Try to parse the friend's chat ID
+        const friendId = parseInt(msg.text.trim());
+        
+        if (isNaN(friendId)) {
+            await bot.sendMessage(chatId, `❌ Invalid Chat ID. Please enter a valid numeric ID.`);
+            return;
+        }
+        
+        if (friendId === chatId) {
+            await bot.sendMessage(chatId, `❌ You cannot add yourself as a friend.`);
+            return;
+        }
+        
+        try {
+            // Check if friend exists in the database
+            const friendUser = await User.findOne({ chatId: friendId });
+            
+            if (!friendUser) {
+                await bot.sendMessage(chatId, `⚠️ This user hasn't used the bot yet. Ask them to start the bot first.`);
                 return;
             }
             
-            if (chatId === friendId) {
-                bot.sendMessage(chatId, '⚠️ You cannot add yourself as a friend.');
+            // Check if already friends
+            const currentUser = await User.findOne({ chatId });
+            
+            if (currentUser.friends.includes(friendId)) {
+                await bot.sendMessage(chatId, `ℹ️ ${friendUser.name} is already in your friends list.`);
                 return;
             }
             
-            try {
-                let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-                const user = users.find(user => user.chatId === chatId);
-                const friend = users.find(user => user.chatId === friendId);
-
-                if (!friend) {
-                    bot.sendMessage(chatId, '⚠️ User not found. Please check the chat ID or ask your friend to register with /start');
-                    return;
-                }
-
-                if (!user.friends) user.friends = [];
-                if (!friend.friends) friend.friends = [];
-
-                if (user.friends.includes(friendId)) {
-                    bot.sendMessage(chatId, '👥 Already friends!');
-                    return;
-                }
-
-                // Add each other as friends
-                user.friends.push(friendId);
-                friend.friends.push(chatId);
-                
-                saveUserData(users);
-                
-                bot.sendMessage(chatId, `✅ Friend added successfully! You can now connect with them using /connect.`);
-                bot.sendMessage(friendId, `👋 User ${chatId} has added you as a friend. You can connect with them using /connect.`);
-            } catch (error) {
-                console.error('Error adding friend:', error);
-                bot.sendMessage(chatId, 'An error occurred while adding friend');
-            }
+            // Add friend to user's list
+            await User.findOneAndUpdate(
+                { chatId },
+                { $push: { friends: friendId } }
+            );
+            
+            await bot.sendMessage(chatId, `✅ Added ${friendUser.name} to your friends list!`);
+            
+            // Optionally notify the friend
+            await bot.sendMessage(friendId, `👋 ${currentUser.name} has added you as a friend on TranslationBot.`);
+            
+        } catch (error) {
+            console.error('Error adding friend:', error);
+            await bot.sendMessage(chatId, `❌ An error occurred while adding the friend.`);
         }
     });
 }
 
 // Improved connect command with friend list
-function handleConnect(chatId) {
+async function handleConnect(chatId) {
     try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const user = users.find(u => u.chatId === chatId);
-
-        if (!user || !user.friends || user.friends.length === 0) {
-            bot.sendMessage(chatId, '⚠️ You have no friends added. Add friends first using /addfriend');
-            return;
-        }
-
-        if (user.currentConnection) {
-            bot.sendMessage(chatId, `🔗 You are already connected to User ${user.currentConnection}. Use /disconnect first.`);
-            return;
-        }
-
-        // Create inline keyboard with friend options
-        const keyboard = {
-            inline_keyboard: user.friends.map(friendId => {
-                const friend = users.find(u => u.chatId === friendId);
-                const friendName = friend ? friendId : friendId;
-                const friendLang = friend && friend.language ? ` (${friend.language})` : '';
-                
-                return [{ text: `User ${friendName}${friendLang}`, callback_data: `connect_${friendId}` }];
-            })
-        };
-
-        bot.sendMessage(chatId, '👥 Select a friend to connect with:', {
-            reply_markup: keyboard
-        });
-    } catch (error) {
-        console.error('Error handling connect:', error);
-        bot.sendMessage(chatId, 'An error occurred while trying to connect');
-    }
-}
-
-// Connect to a specific friend
-function handleConnectToFriend(chatId, friendId) {
-    try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const user = users.find(u => u.chatId === chatId);
-        const friend = users.find(u => u.chatId === friendId);
-
-        if (!user || !friend) {
-            bot.sendMessage(chatId, '⚠️ User or friend not found');
-            return;
-        }
+        const user = await User.findOne({ chatId });
         
-        if (friend.currentConnection) {
-            bot.sendMessage(chatId, `⚠️ User ${friendId} is currently in another conversation. Please try again later.`);
-            return;
-        }
-
-        // Set up the connection
-        user.currentConnection = friendId;
-        friend.currentConnection = chatId;
-        
-        saveUserData(users);
-        
-        bot.sendMessage(chatId, `🔗 Connected to User ${friendId}. You can now start chatting!`);
-        bot.sendMessage(friendId, `🔗 User ${chatId} has connected with you. You can now start chatting!`);
-    } catch (error) {
-        console.error('Error connecting to friend:', error);
-        bot.sendMessage(chatId, 'An error occurred while connecting');
-    }
-}
-
-// Handle disconnect with confirmation
-function handleDisconnect(chatId) {
-    try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const user = users.find(u => u.chatId === chatId);
-
-        if (!user || !user.currentConnection) {
-            bot.sendMessage(chatId, "⚠️ You are not connected to anyone.");
-            return;
-        }
-
-        const friendId = user.currentConnection;
-        
-        // Disconnect both users
-        user.currentConnection = null;
-        
-        const friend = users.find(u => u.chatId === friendId);
-        if (friend) {
-            friend.currentConnection = null;
-        }
-        
-        saveUserData(users);
-        
-        bot.sendMessage(chatId, `🔌 You have been disconnected.`);
-        bot.sendMessage(friendId, `🔌 User ${chatId} has disconnected.`);
-    } catch (error) {
-        console.error('Error disconnecting:', error);
-        bot.sendMessage(chatId, 'An error occurred while disconnecting');
-    }
-}
-
-// Improved status command with more details
-function handleStatus(chatId) {
-    try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const user = users.find(u => u.chatId === chatId);
-
         if (!user) {
-            bot.sendMessage(chatId, 'You are not registered.');
+            await bot.sendMessage(chatId, `❌ User profile not found. Please use /start to set up your profile.`);
             return;
         }
-
-        const statusMessage = 
-            `📊 *Your Status*\n\n` +
-            `🆔 Chat ID: ${chatId}\n` +
-            `🌐 Language: ${user.language || 'not set'}\n` +
-            `👤 Gender: ${user.gender !== null ? GENDER_MAP[user.gender] : 'not set'}\n` +
-            `👥 Friends: ${user.friends ? user.friends.length : 0}\n` +
-            `🔗 Connection: ${user.currentConnection ? `connected to User ${user.currentConnection}` : 'not connected'}`;
         
-        // Create action buttons based on current status
-        let keyboard = {
+        if (user.connected) {
+            await bot.sendMessage(chatId, `ℹ️ You are already connected with someone. Use /disconnect first.`);
+            return;
+        }
+        
+        if (user.friends.length === 0) {
+            await bot.sendMessage(chatId, `ℹ️ You don't have any friends yet. Use /addfriend to add friends.`);
+            return;
+        }
+        
+        // Build a keyboard with friend options
+        const keyboard = {
             inline_keyboard: []
         };
         
-        if (!user.language || user.gender === null) {
-            keyboard.inline_keyboard.push([
-                { text: '🌐 Set Language', callback_data: 'set_language' },
-                { text: '👤 Set Gender', callback_data: 'set_gender' }
-            ]);
+        // Get all friends and add them to the keyboard
+        for (const friendId of user.friends) {
+            const friend = await User.findOne({ chatId: friendId });
+            if (friend) {
+                keyboard.inline_keyboard.push([
+                    { text: `${friend.name} (${friend.language || 'Unknown language'})`, callback_data: `connect_${friendId}` }
+                ]);
+            }
         }
         
-        if (user.currentConnection) {
-            keyboard.inline_keyboard.push([
-                { text: '🔌 Disconnect', callback_data: 'disconnect' }
-            ]);
-        } else if (user.friends && user.friends.length > 0) {
-            keyboard.inline_keyboard.push([
-                { text: '🔗 Connect', callback_data: 'connect' }
-            ]);
-        }
-        
-        keyboard.inline_keyboard.push([
-            { text: '➕ Add Friend', callback_data: 'add_friend' }
-        ]);
-            
-        bot.sendMessage(chatId, statusMessage, {
+        await bot.sendMessage(chatId, `🔗 *Connect with a Friend*\n\nSelect a friend to start chatting:`, {
             parse_mode: 'Markdown',
             reply_markup: keyboard
         });
     } catch (error) {
-        console.error('Error handling status:', error);
-        bot.sendMessage(chatId, 'An error occurred while checking status');
+        console.error('Error in connect handler:', error);
+        await bot.sendMessage(chatId, `❌ An error occurred while connecting.`);
+    }
+}
+
+// Connect to a specific friend
+async function handleConnectToFriend(chatId, friendId) {
+    try {
+        // Verify friend exists
+        const friend = await User.findOne({ chatId: friendId });
+        if (!friend) {
+            await bot.sendMessage(chatId, `❌ Friend not found.`);
+            return;
+        }
+        
+        // Check if friend is already connected
+        if (friend.connected) {
+            await bot.sendMessage(chatId, `⚠️ ${friend.name} is currently connected with someone else. Try again later.`);
+            return;
+        }
+        
+        // Update both users' connection status
+        await User.findOneAndUpdate(
+            { chatId },
+            { connected: true, currentConnection: friendId }
+        );
+        
+        await User.findOneAndUpdate(
+            { chatId: friendId },
+            { connected: true, currentConnection: chatId }
+        );
+        
+        // Notify both users
+        await bot.sendMessage(chatId, `🔗 Connected with ${friend.name}! You can now chat with translation.`);
+        await bot.sendMessage(friendId, `🔗 ${(await User.findOne({ chatId })).name} has connected with you! You can now chat with translation.`);
+    } catch (error) {
+        console.error('Error connecting to friend:', error);
+        await bot.sendMessage(chatId, `❌ An error occurred while connecting to your friend.`);
+    }
+}
+
+// Handle disconnect with confirmation
+async function handleDisconnect(chatId) {
+    try {
+        const user = await User.findOne({ chatId });
+        
+        if (!user || !user.connected || !user.currentConnection) {
+            await bot.sendMessage(chatId, `ℹ️ You are not currently connected with anyone.`);
+            return;
+        }
+        
+        const friendId = user.currentConnection;
+        const friend = await User.findOne({ chatId: friendId });
+        
+        // Update both users' connection status
+        await User.findOneAndUpdate(
+            { chatId },
+            { connected: false, currentConnection: null }
+        );
+        
+        await User.findOneAndUpdate(
+            { chatId: friendId },
+            { connected: false, currentConnection: null }
+        );
+        
+        // Notify both users
+        await bot.sendMessage(chatId, `🔌 Disconnected from ${friend ? friend.name : 'your friend'}.`);
+        
+        if (friend) {
+            await bot.sendMessage(friendId, `🔌 ${user.name} has disconnected. Conversation ended.`);
+        }
+        
+        // Show reconnect option
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '🔄 Reconnect', callback_data: `connect_${friendId}` }],
+                [{ text: '🔗 Connect with someone else', callback_data: 'connect' }]
+            ]
+        };
+        
+        await bot.sendMessage(chatId, `What would you like to do next?`, {
+            reply_markup: keyboard
+        });
+    } catch (error) {
+        console.error('Error disconnecting:', error);
+        await bot.sendMessage(chatId, `❌ An error occurred while disconnecting.`);
+    }
+}
+
+// Improved status command with more details
+async function handleStatus(chatId) {
+    try {
+        const user = await User.findOne({ chatId });
+        
+        if (!user) {
+            await bot.sendMessage(chatId, `❌ User profile not found. Please use /start to set up your profile.`);
+            return;
+        }
+        
+        let statusMessage = `📊 *Your Status*\n\n`;
+        
+        // Profile section
+        statusMessage += `*Profile:*\n`;
+        statusMessage += `- Name: ${user.name}\n`;
+        statusMessage += `- Language: ${user.language || 'Not set'}\n`;
+        statusMessage += `- Gender: ${user.gender !== null ? GENDER_MAP[user.gender] : 'Not set'}\n\n`;
+        
+        // Connection status
+        statusMessage += `*Connection:*\n`;
+        
+        if (user.connected && user.currentConnection) {
+            const friend = await User.findOne({ chatId: user.currentConnection });
+            statusMessage += `- Status: Connected\n`;
+            statusMessage += `- Connected with: ${friend ? friend.name : 'Unknown'}\n`;
+            statusMessage += `- Their language: ${friend ? (friend.language || 'Unknown') : 'Unknown'}\n`;
+        } else {
+            statusMessage += `- Status: Not connected\n`;
+        }
+        
+        // Friends list
+        statusMessage += `\n*Friends (${user.friends.length}):*\n`;
+        
+        if (user.friends.length === 0) {
+            statusMessage += `- No friends added yet. Use /addfriend to add friends.`;
+        } else {
+            for (const friendId of user.friends) {
+                const friend = await User.findOne({ chatId: friendId });
+                if (friend) {
+                    const isOnline = !friend.connected || friend.currentConnection === chatId;
+                    statusMessage += `- ${friend.name} (${friend.language || 'Unknown'}) ${isOnline ? '🟢' : '🔴'}\n`;
+                }
+            }
+        }
+        
+        // Action buttons
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '🌐 Change Language', callback_data: 'set_language' }],
+                [{ text: '👤 Change Gender', callback_data: 'set_gender' }],
+                [{ text: '➕ Add Friend', callback_data: 'add_friend' }],
+                [{ text: '🔗 Connect', callback_data: 'connect' }]
+            ]
+        };
+        
+        // Add disconnect button if connected
+        if (user.connected) {
+            keyboard.inline_keyboard.push([{ text: '🔌 Disconnect', callback_data: 'disconnect' }]);
+        }
+        
+        await bot.sendMessage(chatId, statusMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+        });
+    } catch (error) {
+        console.error('Error getting status:', error);
+        await bot.sendMessage(chatId, `❌ An error occurred while getting your status.`);
     }
 }
 
@@ -468,73 +547,71 @@ bot.on('message', async (msg) => {
     if (msg.text && msg.text.startsWith('/') || msg.from.is_bot) {
         return;
     }
-
+    
     const chatId = msg.chat.id;
     
     try {
-        let users = JSON.parse(fs.readFileSync('data.json', 'utf8'));
-        const user = users.find(u => u.chatId === chatId);
-
-        if (user && user.currentConnection) {
-            const recipientId = user.currentConnection;
-            const recipientUser = users.find(u => u.chatId === recipientId);
-            
-            if (!recipientUser) {
-                console.error(`Recipient ${recipientId} not found`);
-                return;
-            }
-
-            // Show typing indicator
-            bot.sendChatAction(recipientId, 'typing');
-            
-            let messageContent;
-            
-            // Handle different message types
-            if (msg.text) {
-                // Text message
-                messageContent = msg.text;
-                
-                // Include gender information in translation
-                let translatedMessage = await translate(
-                    messageContent, 
-                    user.language, 
-                    recipientUser.language, 
-                    user.gender, 
-                    recipientUser.gender
-                );
-                
-                console.log(`Translating from ${user.language} to ${recipientUser.language}`);
-                console.log(`Sender gender: ${user.gender} (${GENDER_MAP[user.gender]})`);
-                console.log(`Receiver gender: ${recipientUser.gender} (${GENDER_MAP[recipientUser.gender]})`);
-                
-                bot.sendMessage(recipientId, translatedMessage);
-            } else if (msg.photo) {
-                // Photo with optional caption
-                const photoId = msg.photo[msg.photo.length - 1].file_id;
-                
-                if (msg.caption) {
-                    // Translate caption
-                    const translatedCaption = await translate(
-                        msg.caption,
-                        user.language,
-                        recipientUser.language,
-                        user.gender,
-                        recipientUser.gender
-                    );
-                    
-                    bot.sendPhoto(recipientId, photoId, { caption: translatedCaption });
-                } else {
-                    bot.sendPhoto(recipientId, photoId);
-                }
-            } 
-            else if (msg.document) {
-                // Document
-                bot.sendDocument(recipientId, msg.document.file_id);
-            } else {
-                // Unsupported message type
-                bot.sendMessage(recipientId, "📨 [Received a message type that cannot be translated]");
-            }
+        const user = await User.findOne({ chatId });
+        
+        if (!user || !user.connected || !user.currentConnection) {
+            // User is not connected, no translation needed
+            return;
         }
+        
+        const friendId = user.currentConnection;
+        const friend = await User.findOne({ chatId: friendId });
+        
+        if (!friend) {
+            await bot.sendMessage(chatId, `❌ Your connection is no longer valid. The friend has been removed.`);
+            await User.findOneAndUpdate(
+                { chatId },
+                { connected: false, currentConnection: null }
+            );
+            return;
+        }
+        
+        // We need both user's language settings for translation
+        if (!user.language || !friend.language) {
+            await bot.sendMessage(chatId, `⚠️ Both you and your friend need to set your languages for translation to work.`);
+            return;
+        }
+        
+        // Get the original message
+        const originalText = msg.text || '';
+        
+        // Don't try to translate empty messages
+        if (!originalText.trim()) {
+            await bot.sendMessage(friendId, originalText);
+            return;
+        }
+        
+        // Show typing indicator to the receiver
+        await bot.sendChatAction(friendId, 'typing');
+        
+        // Get gender context for better translation
+        const genderContext = user.gender !== null ? GENDER_MAP[user.gender] : 'unknown';
+        
+        try {
+            // Call the translate function from llm.js
+            const translatedText = await translate(originalText, user.language, friend.language, genderContext);
+            
+            // Send both original and translated text to receiver
+            const message = `${user.name}:\n\n${translatedText}\n\n🔤 *Original (${user.language}):*\n${originalText}`;
+            
+            await bot.sendMessage(friendId, message, {
+                parse_mode: 'Markdown'
+            });
+            
+        } catch (translationError) {
+            console.error('Translation error:', translationError);
+            
+            // If translation fails, send original message
+            await bot.sendMessage(friendId, `${user.name} (translation failed):\n\n${originalText}`);
+            
+            // Notify the sender about translation failure
+            await bot.sendMessage(chatId, `⚠️ Your message was sent, but translation failed.`);
+        }
+        
     } catch (error) {
         console.error('Error handling message:', error);
     }
