@@ -62,7 +62,7 @@ bot.onText(/\/start/, async (msg) => {
             saveUserData(users);
             
             // Welcome message with inline buttons
-            const welcomeMessage = `👋 Welcome to Ziadico!\n\nThis bot allows you to chat with friends in different languages. The bot will automatically translate messages between you.\n\nPlease set up your profile:`;
+            const welcomeMessage = `👋 Welcome to Ziadico!\n\nThis bot automatically translates the messages in real time, enabling smooth conversations with friends and colleagues worldwide.\n\nPlease set up your profile:`;
             
             const keyboard = {
                 inline_keyboard: [
